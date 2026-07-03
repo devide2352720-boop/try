@@ -271,7 +271,15 @@
         const grid = turf.interpolate(globalPoints, 0.6, { 
             gridType: 'points', property: 'price', units: 'kilometers', weight: 2.5 
         });
-        const shanghaiPoly = shanghaiGeoJSON.features[0];
+        let shanghaiPoly = shanghaiGeoJSON.features[0];
+
+        for (let i = 1; i < shanghaiGeoJSON.features.length; i++) {
+            try {
+                shanghaiPoly = turf.union(shanghaiPoly, shanghaiGeoJSON.features[i]);
+            } catch (e) {
+                console.warn("union失败：", i, e);
+            }
+        }
 
         if (isobandLayer) map.removeLayer(isobandLayer);
         if (isolineLayer) map.removeLayer(isolineLayer);
