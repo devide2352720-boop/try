@@ -158,7 +158,7 @@
 
     map.fitBounds(layer.getBounds());
 
-    baseBlockLayer.bringToBack();
+    // baseBlockLayer.bringToBack();
 
 });
     // 图层管理
@@ -368,7 +368,7 @@
         }).addTo(map);
 
         // 强制确保图层覆盖顺序: 自定义CSV板块最底 -> 房价等值面中间 -> 房价等值线最顶
-        baseBlockLayer.bringToBack();
+        // baseBlockLayer.bringToBack();
         isolineLayer.bringToFront();
 
         updateLegend(priceBreaks, getDynamicColor);
