@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>地产板块底板与新房等值线综合可视化系统</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body, html { width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+        #app { display: flex; width: 100%; height: 100%; }
+        
+        /* 控制面板样式 */
+        #sidebar { width: 340px; height: 100%; background: #ffffff; box-shadow: 2px 0 10px rgba(0,0,0,0.1); padding: 25px; z-index: 1000; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+        h1 { font-size: 18px; color: #2c3e50; margin-bottom: 2px; }
+        .subtitle { font-size: 12px; color: #7f8c8d; margin-bottom: 10px; }
+        .section { background: #f8f9fa; border: 1px solid #e9ecef; padding: 15px; border-radius: 6px; }
+        .section-title { font-weight: bold; font-size: 13px; color: #495057; margin-bottom: 10px; display: flex; align-items: center; gap: 5px; }
+        
+        /* 拖拽/点击上传区域 */
+        .upload-box { border: 2px dashed #3498db; background: #fff; padding: 20px; text-align: center; border-radius: 6px; cursor: pointer; transition: all 0.2s; position: relative; }
+        .upload-box:hover { background: #f1f9fe; border-color: #2980b9; }
+        .upload-box input[type="file"] { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+        
+        .form-group { margin-top: 15px; font-size: 13px; color: #444; display: flex; justify-content: space-between; align-items: center;}
+        .form-group input[type="number"] { width: 70px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
+        button { width: 100%; background: #3498db; color: white; border: none; padding: 10px; font-size: 14px; font-weight: bold; border-radius: 4px; cursor: pointer; transition: background 0.2s; margin-top: 10px; }
+        button:hover { background: #2980b9; }
+
+        .status { font-size: 12px; color: #6c757d; margin-top: 8px; line-height: 1.5; }
+        .success-text { color: #27ae60; font-weight: bold; }
+        .info-text { color: #e67e22; font-weight: bold; }
+
+        /* 右侧全屏地图背景 */
+        #map { flex: 1; height: 100%; background: #eef1f3; }
+
+        /* 等值面强制点击穿透 */
+        .isoband-layer-class { pointer-events: none !important; }
+
+        /* 图例样式 */
+        .legend-panel {
+            background: rgba(255, 255, 255, 0.95); padding: 12px 16px; border-radius: 8px;
+            box-shadow: 0 2px 15px rgba(0,0,0,0.2); line-height: 22px; color: #333;
+            font-size: 12px; min-width: 110px; border: 1px solid #ddd;
+        }
+        .legend-title { font-weight: bold; margin-bottom: 6px; font-size: 14px; }
+        .legend-unit { font-size: 11px; color: #666; margin-bottom: 10px; }
+        .legend-item { display: flex; align-items: center; margin-bottom: 4px; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; margin-right: 8px; display: inline-block; opacity: 0.85; }
+
+        /* 板块名称标签：高清白边文字 */
+        .block-label {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            font-size: 11.5px !important;
+            font-weight: bold !important;
+            color: #2c3e50 !important;
+            text-shadow: 
+                1.5px 1.5px 0px #fff, -1.5px -1.5px 0px #fff, 
+                1.5px -1.5px 0px #fff, -1.5px 1.5px 0px #fff,
+                0px 1.5px 0px #fff, 0px -1.5px 0px #fff,
+                1.5px 0px 0px #fff, -1.5px 0px 0px #fff;
+            padding: 0 !important;
+            pointer-events: none !important;
+            white-space: nowrap;
+        }
+        
+        /* 等值线气泡提示 */
+        .contour-tooltip { font-size: 12px; font-weight: bold; background: rgba(44, 62, 80, 0.9) !important; color: #fff !important; border: none !important; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        
+        /* 房价等值线红字断线特效 */
+        .isoline-label {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            pointer-events: none !important;
+            font-size: 12px;
+            color: #d32f2f;
+            font-weight: 900;
+            text-shadow: -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff, -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff, 0px 0px 4px #fff; 
+            white-space: nowrap;
+        }
+        .isoline-label::before { display: none; } 
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <div id="sidebar">
+        <div>
+            <h1>GIS 空间分析工作台</h1>
+            <div class="subtitle">全自动底图加载与等值线生成系统</div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">🌐 系统环境状态</div>
+            <div class="status" id="geoStatus">
+                <span class="info-text">正在自动获取同级目录下 `blocks.geojson` ...</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">📊 叠加房价散点数据</div>
+            <div class="upload-box">
+                <div style="font-size: 24px; margin-bottom: 5px;">📈</div>
+                <div style="font-size: 13px; font-weight: bold; color: #3498db;">点击或拖拽上传 Excel 文件</div>
+                <div style="font-size: 11px; color: #95a5a6; margin-top: 3px;">支持 .xlsx 格式</div>
+                <input type="file" id="excelFileInput" accept=".xlsx, .xls" />
+            </div>
+            <div class="status" id="excelStatus">等待导入...</div>
+
+            <div class="form-group">
+                <label>等值线间距 (万元): </label>
+                <input type="number" id="intervalInput" value="2" step="0.5" min="0.5" />
+            </div>
+            <button id="recalcBtn">重新渲染房价等值线</button>
+        </div>
+    </div>
+
+    <div id="map"></div>
+</div>
+
+<script>
+    // 1. 初始化纯净版地图底座
+    const map = L.map('map', { zoomControl: false }).setView([31.2304, 121.4737], 10);
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    // 图层管理
+    let baseBlockLayer = L.layerGroup().addTo(map); // 本地 GeoJSON 自定义底板层
+    let isobandLayer = null;    // 等值面层
+    let isolineLayer = null;    // 等值线层
+    let boundaryLayer = null;   // 用于裁切的上海大轮廓
+    
+    // 全局数据
+    let shanghaiGeoJSON = null; 
+    let globalPoints = null;  
+    let legendControl = null;
+    let highlightedPrices = new Set(); 
+
+    const colorPalette = ['#b9c3e3', '#93b4e7', '#93ebd3', '#d0f597', '#fee192', '#ffa763', '#f76868', '#d35384', '#9e2a5e'];
+
+    // 格式化 16 进制颜色辅助函数
+    function formatHexColor(colorStr) {
+        if (!colorStr) return '#e4e4e7';
+        let clean = colorStr.toUpperCase().replace('0X', '').replace('#', '');
+        if (clean.length === 8) return '#' + clean.substring(2); 
+        if (clean.length === 6) return '#' + clean;
+        return '#e4e4e7'; // 默认灰色
+    }
+
+    // ==========================================
+    // 2. 自动加载阿里云边界 (用于等值面的边缘完美裁切)
+    // ==========================================
+    fetch("https://geo.datav.aliyun.com/areas_v3/bound/310000.json")
+        .then(res => res.json())
+        .then(geojson => {
+            shanghaiGeoJSON = geojson;
+            boundaryLayer = L.geoJSON(geojson, {
+                style: { color: '#ff4d4f', weight: 1.5, fillOpacity: 0, dashArray: '5, 5' },
+                interactive: false
+            }).addTo(map);
+        }).catch(err => console.error("上海大边界加载失败:", err));
+
+    // ==========================================
+    // 3. 全自动：加载同级目录下的 blocks.geojson
+    // ==========================================
+    // 注意：部署到 Github Pages 时，请确保该文件在同一目录下
+    fetch('./blocks.geojson')
+        .then(response => {
+            if (!response.ok) throw new Error("文件未找到");
+            return response.json();
+        })
+        .then(geojson => {
+            let loadedCount = 0;
+            
+            // 将读取到的 GeoJSON 直接渲染到地图上
+            const blockFeatures = L.geoJSON(geojson, {
+                style: function(feature) {
+                    // 兼容多种可能出现的颜色字段名称
+                    let colorStr = feature.properties['填充颜色'] || feature.properties['颜色'] || feature.properties.color || feature.properties.Color;
+                    return {
+                        color: '#666666',   // 板块边框
+                        weight: 1,
+                        fillColor: formatHexColor(colorStr),
+                        fillOpacity: 0.45,
+                        interactive: false  // 底层允许鼠标穿透
+                    };
+                },
+                onEachFeature: function(feature, layer) {
+                    // 兼容多种可能出现的名字字段名称
+                    let name = feature.properties['名称'] || feature.properties.name || feature.properties.Name;
+                    if (name) {
+                        layer.bindTooltip(name, {
+                            permanent: true,
+                            direction: 'center',
+                            className: 'block-label'
+                        });
+                        loadedCount++;
+                    }
+                }
+            }).addTo(baseBlockLayer);
+
+            // 自动将地图视角缩放到自定义板块的范围
+            map.fitBounds(blockFeatures.getBounds());
+            baseBlockLayer.bringToBack(); // 强制垫底
+
+            document.getElementById('geoStatus').innerHTML = `
+                <span class="success-text">✅ 底板环境已就绪</span><br>
+                成功读取同目录 <b>blocks.geojson</b><br>
+                共加载 ${loadedCount} 个自定义板块区域。
+            `;
+        })
+        .catch(err => {
+            console.error(err);
+            document.getElementById('geoStatus').innerHTML = `
+                <span style="color:#e74c3c; font-weight:bold;">❌ 底板加载失败</span><br>
+                找不到同级目录下的 \`blocks.geojson\`。<br>
+                请确保文件已上传至 Github 仓库正确位置。
+            `;
+        });
+
+    // ==========================================
+    // 4. 读取 Excel 房价数据点
+    // ==========================================
+    document.getElementById('excelFileInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+            const data = new Uint8Array(evt.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+            
+            let headerRowIndex = -1;
+            for (let i = 0; i < sheetData.length; i++) {
+                if (sheetData[i] && sheetData[i].includes("项目经度") && sheetData[i].includes("25-26年成交均价")) {
+                    headerRowIndex = i; break;
+                }
+            }
+            if (headerRowIndex === -1) return alert("XLSX 未找到有效表头！");
+
+            const headers = sheetData[headerRowIndex];
+            const lngIdx = headers.indexOf("项目经度");
+            const latIdx = headers.indexOf("项目纬度");
+            const priceIdx = headers.indexOf("25-26年成交均价");
+
+            let pointsArray = [];
+            for (let i = headerRowIndex + 1; i < sheetData.length; i++) {
+                const row = sheetData[i];
+                if (!row) continue;
+                const lng = parseFloat(row[lngIdx]);
+                const lat = parseFloat(row[latIdx]);
+                const price = parseFloat(row[priceIdx]);
+                if (!isNaN(lng) && !isNaN(lat) && !isNaN(price) && price > 0) {
+                    pointsArray.push(turf.point([lng, lat], { price: price }));
+                }
+            }
+            globalPoints = turf.featureCollection(pointsArray);
+            document.getElementById('excelStatus').innerHTML = `<span class="success-text">✅ 成功提取 ${pointsArray.length} 个房价样本</span>`;
+            
+            // 读取完成后，自动触发生成等值线
+            document.getElementById('recalcBtn').click();
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    // ==========================================
+    // 5. 渲染等值线与等值面核心算法
+    // ==========================================
+    document.getElementById('recalcBtn').addEventListener('click', function() {
+        if (!globalPoints) return alert("请先上传包含房价数据的 Excel 表格！");
+        if (!shanghaiGeoJSON) return alert("城市最外围边界正在加载中，请稍后。");
+
+        const intervalW = parseFloat(document.getElementById('intervalInput').value); 
+        if (isNaN(intervalW) || intervalW <= 0) return alert("间隔必须为正数！");
+        
+        const interval = intervalW * 10000;
+        let maxPrice = 0;
+        turf.propEach(globalPoints, function(prop) {
+            if (prop.price > maxPrice) maxPrice = prop.price;
+        });
+        
+        let priceBreaks = [];
+        for (let p = 0; p <= (maxPrice + interval); p += interval) {
+            priceBreaks.push(p);
+        }
+
+        function getDynamicColor(minPriceStr) {
+            const minPrice = parseFloat(minPriceStr);
+            const ratio = minPrice / maxPrice;
+            let index = Math.floor(ratio * colorPalette.length);
+            if (index >= colorPalette.length) index = colorPalette.length - 1;
+            if (index < 0) index = 0;
+            return colorPalette[index];
+        }
+
+        // 使用 Turf IDW 插值
+        const grid = turf.interpolate(globalPoints, 0.6, { 
+            gridType: 'points', property: 'price', units: 'kilometers', weight: 2.5 
+        });
+        
+        const shanghaiPoly = shanghaiGeoJSON.features[0];
+
+        if (isobandLayer) map.removeLayer(isobandLayer);
+        if (isolineLayer) map.removeLayer(isolineLayer);
+
+        // A. 生成底层彩色等值面，并利用阿里云的上海轮廓做精确裁切
+        const rawIsobands = turf.isobands(grid, priceBreaks, { zProperty: 'price' });
+        let clippedBands = [];
+        rawIsobands.features.forEach(function(feat) {
+            try {
+                let intersected = turf.intersect(feat, shanghaiPoly);
+                if (intersected && intersected.geometry) {
+                    intersected.properties = feat.properties; 
+                    clippedBands.push(intersected);
+                }
+            } catch (err) {}
+        });
+
+        isobandLayer = L.geoJSON(turf.featureCollection(clippedBands), {
+            style: function (feature) {
+                const minPrice = feature.properties.price.split('-')[0];
+                return {
+                    fillColor: getDynamicColor(minPrice),
+                    fillOpacity: 0.65, 
+                    weight: 0,         
+                    className: 'isoband-layer-class' // CSS 穿透
+                };
+            }
+        }).addTo(map);
+
+        // B. 生成顶层交互等值线
+        const rawIsolines = turf.isolines(grid, priceBreaks, { zProperty: 'price' });
+        let validLines = [];
+        
+        // 彻底解构多边形闭环
+        turf.flatten(rawIsolines).features.forEach(function(flatFeat) {
+            validLines.push(flatFeat); 
+        });
+
+        isolineLayer = L.geoJSON(turf.featureCollection(validLines), {
+            renderer: L.canvas({ tolerance: 8 }), // Canvas 渲染增加点击容差
+            style: function() { return { color: "#444", weight: 1.5, opacity: 0.8, dashArray: "4, 4" }; },
+            onEachFeature: function (feature, layer) {
+                const priceNum = parseFloat(feature.properties.price);
+                if (priceNum > 0) { 
+                    layer.bindTooltip((priceNum / 10000) + "万", {
+                        permanent: true, direction: 'center', className: 'isoline-label' 
+                    });
+                }
+
+                // 多选 Toggle 点击高亮
+                layer.on("click", function (e) {
+                    if (e.originalEvent) L.DomEvent.stopPropagation(e.originalEvent);
+                    const currentPrice = Number(feature.properties.price).toFixed(0);
+
+                    if (highlightedPrices.has(currentPrice)) {
+                        highlightedPrices.delete(currentPrice);
+                    } else {
+                        highlightedPrices.add(currentPrice);
+                    }
+
+                    isolineLayer.eachLayer(function (l) {
+                        const p = Number(l.feature.properties.price).toFixed(0);
+                        if (highlightedPrices.has(p)) {
+                            l.setStyle({ color: "#e74c3c", weight: 3.5, opacity: 1, dashArray: null });
+                            l.bringToFront();
+                        } else {
+                            l.setStyle({ color: "#444", weight: 1.5, opacity: 0.8, dashArray: "4,4" });
+                        }
+                    });
+                });
+            }
+        }).addTo(map);
+
+        // 终极排序：自定义版块垫底 -> 房价热力色块 -> 房价等值线最顶
+        baseBlockLayer.bringToBack();
+        isolineLayer.bringToFront();
+
+        updateLegend(priceBreaks, getDynamicColor);
+    });
+
+    // 动态更新右下角图例
+    function updateLegend(breaks, colorFn) {
+        if (legendControl) map.removeControl(legendControl);
+        legendControl = L.control({ position: 'bottomleft' });
+        legendControl.onAdd = function () {
+            const div = L.DomUtil.create('div', 'legend-panel');
+            let html = `<div class="legend-title">价格梯度图例</div><div class="legend-unit">(单位: 万/㎡)</div>`;
+            for (let i = 0; i < breaks.length - 1; i++) {
+                const minP = breaks[i], maxP = breaks[i+1];
+                if (maxP === 0) continue; 
+                html += `<div class="legend-item"><span class="legend-color" style="background:${colorFn(minP)}"></span><span>${minP/10000} - ${maxP/10000}</span></div>`;
+            }
+            div.innerHTML = html;
+            return div;
+        };
+        legendControl.addTo(map);
+    }
+</script>
+</body>
+</html>
